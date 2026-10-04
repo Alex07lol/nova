@@ -177,6 +177,53 @@ test('team message send and inbox route messages between workers', async () => {
   }
 });
 
+test('team message inbox indents replies under their root', async () => {
+  const root = await makeRoot('nova-team-cli-threads-');
+  try {
+    await runTeam(['init', 'demo'], root);
+
+    const sent = await runTeam(
+      ['message', 'send', 'agy-backend', 'Which auth flow do we use?'],
+      root,
+      { TEAM_ACTOR: 'lead' },
+    );
+    assert.equal(sent.code, 0);
+    const rootId = sent.stdout.match(/Sent message (msg_\w+)/)[1];
+
+    const reply = await runTeam(
+      ['message', 'send', 'agy-backend', 'OAuth2 with PKCE', '--reply-to', rootId],
+      root,
+      { TEAM_ACTOR: 'codex-ui' },
+    );
+    assert.equal(reply.code, 0);
+
+    const inbox = await runTeam(['message', 'inbox', 'agy-backend'], root);
+    assert.equal(inbox.code, 0);
+    const lines = inbox.stdout.split('\n').filter((line) => line.includes('msg_'));
+    assert.equal(lines.length, 2);
+    // Root first and flush; the reply indented beneath it (same shape the
+    // desktop MESSAGES panel draws).
+    assert.ok(!lines[0].startsWith('  ↳ '), 'root prints unindented');
+    assert.match(lines[0], /Which auth flow do we use\?/);
+    assert.match(lines[1], /^ {2}↳ •?\s*msg_/, 'reply is indented under its root');
+    assert.match(lines[1], /OAuth2 with PKCE/);
+
+    // Replying marks the root read, mirroring the desktop composer.
+    assert.ok(!lines[0].includes('•'), 'root was marked read by the reply');
+
+    // A bad --reply-to fails loudly instead of spawning a stray thread.
+    const bad = await runTeam(
+      ['message', 'send', 'agy-backend', 'oops', '--reply-to', 'msg_fffffff0'],
+      root,
+      { TEAM_ACTOR: 'codex-ui' },
+    );
+    assert.equal(bad.code, 1);
+    assert.match(bad.stderr, /Reply target not found/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('team event emit appends to the activity log; help and errors behave', async () => {
   const root = await makeRoot('nova-team-cli-event-');
   try {

@@ -8,6 +8,7 @@
 
 import { resolve } from 'node:path';
 import { createTeam } from '../../../packages/team-protocol/src/team.js';
+import { groupThreads } from '../../../packages/team-protocol/src/messages.js';
 
 const root = resolve(process.cwd());
 const args = process.argv.slice(2);
@@ -125,11 +126,21 @@ async function main() {
     }
 
     if (command === 'message' || command === 'msg') {      if (sub === 'send') {
-        const to = rest[0];
-        const body = rest.slice(1).join(' ');
+        const restArgs = [...rest];
+        let replyTo;
+        const replyFlag = restArgs.indexOf('--reply-to');
+        if (replyFlag !== -1) {
+          replyTo = restArgs[replyFlag + 1];
+          restArgs.splice(replyFlag, 2);
+        }
+        const to = restArgs[0];
+        const body = restArgs.slice(1).join(' ');
 
-        if (!to || !body) { console.error('Usage: team message send <worker> <body...>'); process.exit(1); }
-        const msg = await team.sendMessage({ to, body, type: 'notification' });
+        if (!to || !body || (replyFlag !== -1 && !replyTo)) {
+          console.error('Usage: team message send <worker> <body...> [--reply-to <msg-id>]');
+          process.exit(1);
+        }
+        const msg = await team.sendMessage({ to, body, type: 'notification', replyTo });
         console.log(`Sent message ${msg.id} to ${to}`);
         process.exit(0);
       }
@@ -209,17 +220,24 @@ async function main() {
   }
 }
 
-/** Print messages; unread ones get a bullet, newest first. */
+/**
+ * Print messages as threads: the root first, replies indented beneath it —
+ * the terminal mirror of the desktop MESSAGES panel. Unread rows get a
+ * bullet; row content is unchanged.
+ */
 function printMessages(messages) {
   if (!messages.length) {
     console.log('No messages.');
     return;
   }
-  for (const m of messages) {
-    const unread = m.status === 'read' ? ' ' : '•';
-    const to = !m.to || m.to === '*' ? '*' : m.to;
-    const subject = m.subject ? `${m.subject} — ` : '';
-    console.log(`${unread} ${m.id}  ${m.from} → ${to} (${m.type}): ${subject}${m.body}`);
+  for (const thread of groupThreads(messages)) {
+    thread.members.forEach((m, index) => {
+      const unread = m.status === 'read' ? ' ' : '•';
+      const to = !m.to || m.to === '*' ? '*' : m.to;
+      const subject = m.subject ? `${m.subject} — ` : '';
+      const indent = index === 0 ? '' : '  ↳ ';
+      console.log(`${indent}${unread} ${m.id}  ${m.from} → ${to} (${m.type}): ${subject}${m.body}`);
+    });
   }
 }
 
@@ -236,9 +254,9 @@ Usage:
   team task create <title> [--id <id>]  Create a new task
   team task complete <id>               Mark a task completed
   team task update <id> <status>        Update task status
-  team message send <to> <body...>      Send a message to a worker
-  team message inbox [<worker>]         View a message inbox (default: TEAM_ACTOR)
-  team messages                         Show every message, newest first
+  team message send <to> <body...> [--reply-to <id>]  Send a message (thread it with --reply-to)
+  team message inbox [<worker>]         View an inbox; replies indent under their root
+  team messages                         Show every message grouped into threads
   team event emit <TYPE> [summary...]   Append an event to the activity log
   team contract list                    List published contracts
   team help                             Show this help message

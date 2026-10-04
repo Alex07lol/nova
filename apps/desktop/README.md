@@ -48,7 +48,10 @@ foundation plus the shared `.ai-team` protocol engine and its `team` CLI.
   Triage without the mouse: `j`/`k` move the selection (scrolling it into
   view), `r` opens the reply composer, `Enter` opens or sends, `Esc` cancels.   Keys aimed at text fields or worker terminals are left alone. Replies
    thread under the message they answer via the protocol's `replyTo` field —
-   chains resolve to one root, and threads sort by latest activity.
+   chains resolve to one root, and threads sort by latest activity. Long
+   threads stay scannable: only their newest two rows render, behind a
+   "show N earlier" toggle, and the keyboard only ever lands on visible rows
+   (an open reply composer keeps its own thread expanded).
 - **Team protocol + `team` CLI** (`packages/team-protocol` +
   `apps/cli/src/team-cli.js`) — the shared `.ai-team` engine (tasks with
   dependency unlocking, messages, contracts, decisions, JSONL events) and the
@@ -56,6 +59,10 @@ foundation plus the shared `.ai-team` protocol engine and its `team` CLI.
   `team task create|list|ready|show|update|complete`,
   `team message send|inbox`, `team messages`, `team event emit`,
   `team contract list`, `team worktree create|remove|list` (spec §13/§34).
+  `team message inbox` draws the same thread structure as the desktop panel —
+  replies indent under their root (the inbox pulls in the root for context),
+  and `team message send --reply-to <id>` threads a new message onto an
+  existing one, marking the target read just like the lead composer.
 
 ## Running
 

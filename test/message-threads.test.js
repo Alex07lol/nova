@@ -1,8 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  COLLAPSED_THREAD_ROWS,
   flattenThreads,
+  flattenVisibleThreads,
   groupIntoThreads,
+  hiddenMemberCount,
+  visibleThreadMembers,
 } from '../apps/desktop/src/features/command-center/message-threads.ts';
 
 const msg = (id, createdAt, replyTo = null) => ({ id, createdAt, replyTo });
@@ -81,3 +85,69 @@ test('empty input yields no threads', () => {
   assert.deepEqual(groupIntoThreads([]), []);
 });
 
+// --- collapse: long threads show only their newest two rows ---------------
+
+const longThread = () =>
+  groupIntoThreads([
+    msg('t-1', '2026-10-01T09:00:00Z'),
+    msg('t-2', '2026-10-01T09:10:00Z', 't-1'),
+    msg('t-3', '2026-10-01T09:20:00Z', 't-2'),
+    msg('t-4', '2026-10-01T09:30:00Z', 't-3'),
+    msg('t-5', '2026-10-01T09:40:00Z', 't-4'),
+  ]);
+
+test('a five-message thread collapses to its newest two rows', () => {
+  const [thread] = longThread();
+  const collapsed = new Set();
+  assert.equal(hiddenMemberCount(thread), 3);
+  assert.equal(COLLAPSED_THREAD_ROWS, 2);
+  assert.deepEqual(
+    visibleThreadMembers(thread, collapsed).map((m) => m.id),
+    ['t-4', 't-5'],
+  );
+});
+
+test('threads of two or fewer members never collapse', () => {
+  for (const count of [1, 2]) {
+    const messages = Array.from({ length: count }, (_, i) =>
+      i === 0
+        ? msg('s-1', '2026-10-01T09:00:00Z')
+        : msg(`s-${i + 1}`, `2026-10-01T09:0${i}:00Z`, 's-1'),
+    );
+    const [thread] = groupIntoThreads(messages);
+    assert.equal(hiddenMemberCount(thread), 0);
+    assert.deepEqual(visibleThreadMembers(thread, new Set()), thread.members);
+  }
+});
+
+test('expanding a collapsed thread reveals every member again', () => {
+  const [thread] = longThread();
+  const expanded = new Set([thread.root.id]);
+  assert.equal(hiddenMemberCount(thread), 3); // count still reported
+  assert.deepEqual(
+    visibleThreadMembers(thread, expanded).map((m) => m.id),
+    ['t-1', 't-2', 't-3', 't-4', 't-5'],
+  );
+});
+
+test('flattenVisibleThreads interleaves collapsed and expanded threads in render order', () => {
+  const threads = groupIntoThreads([
+    // Long thread: collapses to t-4, t-5.
+    msg('t-1', '2026-10-01T09:00:00Z'),
+    msg('t-2', '2026-10-01T09:10:00Z', 't-1'),
+    msg('t-3', '2026-10-01T09:20:00Z', 't-2'),
+    msg('t-4', '2026-10-01T09:30:00Z', 't-3'),
+    msg('t-5', '2026-10-01T09:40:00Z', 't-4'),
+    // Short thread: always fully visible, newest activity → rendered first.
+    msg('s-1', '2026-10-02T09:00:00Z'),
+    msg('s-2', '2026-10-02T09:10:00Z', 's-1'),
+  ]);
+  assert.deepEqual(
+    flattenVisibleThreads(threads, new Set()).map((m) => m.id),
+    ['s-1', 's-2', 't-4', 't-5'],
+  );
+  assert.deepEqual(
+    flattenVisibleThreads(threads, new Set([threads[1].root.id])).map((m) => m.id),
+    ['s-1', 's-2', 't-1', 't-2', 't-3', 't-4', 't-5'],
+  );
+});
