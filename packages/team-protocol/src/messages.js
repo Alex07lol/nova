@@ -53,12 +53,30 @@ export async function listMessages(root) {
   return messages;
 }
 
-/** List messages addressed to a specific worker, newest first. */
+/**
+ * List messages addressed to a specific worker, newest first — plus the
+ * ancestor chain of every reply, so callers can render the same thread
+ * structure the desktop shows. Ancestors may be addressed to someone else;
+ * without them a reply would print with nothing to indent it under.
+ */
 export async function inbox(root, workerId) {
   const messages = await listMessages(root);
-  return messages.filter(m =>
-    m.to === workerId || m.to === '*' || !m.to,
-  );
+  const byId = new Map(messages.map(m => [m.id, m]));
+  const included = new Set();
+  for (const m of messages) {
+    if (m.to !== workerId && m.to !== '*' && m.to) continue;
+    included.add(m.id);
+    let current = m;
+    const seen = new Set([m.id]);
+    while (current.replyTo && !seen.has(current.replyTo)) {
+      const parent = byId.get(current.replyTo);
+      if (!parent) break;
+      seen.add(parent.id);
+      included.add(parent.id);
+      current = parent;
+    }
+  }
+  return messages.filter(m => included.has(m.id));
 }
 
 /** Get a single message by id. */
@@ -72,6 +90,16 @@ export async function getMessage(root, id) {
 
 /** Send a new message. Returns the created message. */
 export async function sendMessage(root, fields) {
+  // A reply must name a real message — a typo'd id would otherwise look
+  // like a brand-new thread. Replying also marks the target read, exactly
+  // like the desktop composer's `messages_send` does.
+  let replyTo = null;
+  if (fields.replyTo) {
+    const target = await getMessage(root, fields.replyTo);
+    if (!target) throw new Error(`Reply target not found: ${fields.replyTo}`);
+    replyTo = fields.replyTo;
+  }
+
   const now = new Date().toISOString();
   const id = `msg_${randomUUID().slice(0, 8)}`;
   const msg = {
@@ -82,6 +110,7 @@ export async function sendMessage(root, fields) {
     subject: fields.subject || '',
     body: fields.body || '',
     taskId: fields.taskId || null,
+    replyTo,
     createdAt: now,
     status: 'unread',
   };
@@ -95,7 +124,65 @@ export async function sendMessage(root, fields) {
   const dest = join(dir, `${id}.json`);
   await writeFile(tmp, JSON.stringify(msg, null, 2) + '\n', 'utf8');
   renameSync(tmp, dest);
+  if (replyTo) await markRead(root, replyTo);
   return msg;
+}
+
+// ---------------------------------------------------------------------------
+// Threading
+// ---------------------------------------------------------------------------
+
+/** ISO-8601 timestamps compare lexicographically; break ties by id. */
+function compareChronological(a, b) {
+  if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * Group messages into threads — the same structure the desktop MESSAGES
+ * panel renders, so terminal workers see identical nesting:
+ *
+ * - every `replyTo` chain resolves up to one root (dangling targets and
+ *   cycles cannot loop or throw),
+ * - members run oldest first under their root,
+ * - threads order by recency of activity, root id breaking ties.
+ */
+export function groupThreads(messages) {
+  const byId = new Map(messages.map(m => [m.id, m]));
+
+  const resolveRootId = (message) => {
+    let currentId = message.id;
+    const seen = new Set([currentId]);
+    for (;;) {
+      const parentId = byId.get(currentId)?.replyTo ?? null;
+      if (!parentId || !byId.has(parentId) || seen.has(parentId)) return currentId;
+      seen.add(parentId);
+      currentId = parentId;
+    }
+  };
+
+  const groups = new Map();
+  for (const message of messages) {
+    const rootId = resolveRootId(message);
+    const bucket = groups.get(rootId);
+    if (bucket) bucket.push(message);
+    else groups.set(rootId, [message]);
+  }
+
+  const threads = [];
+  for (const members of groups.values()) {
+    members.sort(compareChronological);
+    threads.push({
+      root: members[0],
+      members,
+      latestAt: members[members.length - 1].createdAt,
+    });
+  }
+  threads.sort((a, b) => {
+    if (a.latestAt !== b.latestAt) return a.latestAt < b.latestAt ? 1 : -1;
+    return a.root.id < b.root.id ? -1 : a.root.id > b.root.id ? 1 : 0;
+  });
+  return threads;
 }
 
 /** Mark a message as read. */

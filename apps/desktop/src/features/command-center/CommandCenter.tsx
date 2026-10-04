@@ -10,7 +10,12 @@ import { ActivityFeed } from "../activity/ActivityFeed";
 import { messageTypeColor } from "../../lib/status";
 import type { TeamMessage } from "../../lib/types";
 import { nextSelectedIndex } from "./message-keys";
-import { flattenThreads, groupIntoThreads } from "./message-threads";
+import {
+  flattenVisibleThreads,
+  groupIntoThreads,
+  hiddenMemberCount,
+  visibleThreadMembers,
+} from "./message-threads";
 import * as ipc from "../../lib/ipc";
 
 const panelClass = "flex min-h-0 flex-col rounded-xl border border-edge bg-panel";
@@ -57,13 +62,42 @@ export function CommandCenter({ onAddWorker, onOpenDrawer }: { onAddWorker: () =
   const [replyBody, setReplyBody] = React.useState("");
   const [replySending, setReplySending] = React.useState(false);
   const [selectedMessageId, setSelectedMessageId] = React.useState<string | null>(null);
+  // Threads the user explicitly expanded; keyed by root id. Reset naturally
+  // when a project swap recreates the component.
+  const [expandedThreads, setExpandedThreads] = React.useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
   const messagesRef = React.useRef<HTMLDivElement | null>(null);
   const replySendingRef = React.useRef(false);
 
-  // Replies nest under the message they answer (replyTo, spec §14); the
-  // keyboard walks rows in the exact order the panel renders them.
+  const toggleThread = (rootId: string) => {
+    setExpandedThreads((previous) => {
+      const next = new Set(previous);
+      if (next.has(rootId)) next.delete(rootId);
+      else next.add(rootId);
+      return next;
+    });
+  };
+
+  // Replies nest under the message they answer (replyTo, spec §14); long
+  // threads collapse to their newest two rows, and the keyboard walks rows
+  // in the exact order the panel renders them — hidden rows never appear.
   const threads = groupIntoThreads(messages);
-  const displayMessages = flattenThreads(threads);
+  const expanded = new Set(expandedThreads);
+  if (replyingTo) {
+    // An open composer must never be collapsed out of the DOM: if its
+    // target row slipped behind the toggle (fresh replies arrived), keep
+    // that thread expanded.
+    const visibleSoFar = flattenVisibleThreads(threads, expanded);
+    const targetVisible = visibleSoFar.some((entry) => entry.id === replyingTo);
+    if (!targetVisible) {
+      const owner = threads.find((thread) =>
+        thread.members.some((entry) => entry.id === replyingTo),
+      );
+      if (owner) expanded.add(owner.root.id);
+    }
+  }
+  const displayMessages = flattenVisibleThreads(threads, expanded);
 
   const cancelReply = () => {
     setReplyingTo(null);
@@ -101,7 +135,7 @@ export function CommandCenter({ onAddWorker, onOpenDrawer }: { onAddWorker: () =
         row.scrollIntoView({ block: "nearest" });
       }
     });
-  }, [selectedMessageId, messages.length]);
+  }, [selectedMessageId, messages.length, displayMessages.length]);
 
   // Keyboard triage: j/k move, r replies, Enter opens or sends, Esc cancels.
   // Re-registered every render so the handlers see fresh state. Keystrokes
@@ -482,36 +516,57 @@ Use the \`team\` CLI to create tasks. Example:
               </p>
             ) : (
               <ul className="space-y-1">
-                {threads.map((thread) => (
-                  <li
-                    key={thread.root.id}
-                    className={`overflow-hidden rounded-lg border bg-panel-2/50 transition-colors duration-100 ${
-                      thread.members.some((entry) => entry.id === selectedMessageId)
-                        ? "border-accent/60"
-                        : "border-edge"
-                    }`}
-                  >
-                    {thread.members.map((message, memberIndex) => (
-                      <div
-                        key={message.id}
-                        data-message-id={message.id}
-                        onClick={() => setSelectedMessageId(message.id)}
-                        className={`px-3 py-2 transition-colors duration-100 ${
-                          memberIndex > 0
-                            ? "ml-4 border-t border-l-2 border-accent/30 pl-5"
-                            : ""
-                        } ${selectedMessageId === message.id ? "bg-accent/10" : ""}`}
-                      >
-                        {memberIndex > 0 && (
-                          <div className="mb-1 text-[9px] font-medium uppercase tracking-[0.12em] text-faint/70">
-                            ↳ reply
+                {threads.map((thread) => {
+                  const hiddenCount = hiddenMemberCount(thread);
+                  const isExpanded = expanded.has(thread.root.id);
+                  const members = visibleThreadMembers(thread, expanded);
+                  return (
+                    <li
+                      key={thread.root.id}
+                      className={`overflow-hidden rounded-lg border bg-panel-2/50 transition-colors duration-100 ${
+                        thread.members.some((entry) => entry.id === selectedMessageId)
+                          ? "border-accent/60"
+                          : "border-edge"
+                      }`}
+                    >
+                      {hiddenCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => toggleThread(thread.root.id)}
+                          className="w-full border-b border-edge bg-panel px-3 py-1.5 text-left text-[10px] font-medium text-faint transition-colors duration-100 hover:bg-accent/10 hover:text-accent"
+                        >
+                          {isExpanded
+                            ? `hide ${hiddenCount} earlier`
+                            : `show ${hiddenCount} earlier`}
+                        </button>
+                      )}
+                      {members.map((message, memberIndex) => {
+                        const isReply = message.id !== thread.root.id;
+                        return (
+                          <div
+                            key={message.id}
+                            data-message-id={message.id}
+                            onClick={() => setSelectedMessageId(message.id)}
+                            className={`px-3 py-2 transition-colors duration-100 ${
+                              isReply
+                                ? `ml-4 border-l-2 border-accent/30 pl-5${
+                                    memberIndex > 0 ? " border-t" : ""
+                                  }`
+                                : ""
+                            } ${selectedMessageId === message.id ? "bg-accent/10" : ""}`}
+                          >
+                            {isReply && (
+                              <div className="mb-1 text-[9px] font-medium uppercase tracking-[0.12em] text-faint/70">
+                                ↳ reply
+                              </div>
+                            )}
+                            {renderMessageContent(message)}
                           </div>
-                        )}
-                        {renderMessageContent(message)}
-                      </div>
-                    ))}
-                  </li>
-                ))}
+                        );
+                      })}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

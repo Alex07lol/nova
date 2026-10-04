@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { rmSync, mkdirSync } from 'node:fs';
 import { createTeam } from '../packages/team-protocol/src/team.js';
+import { groupThreads } from '../packages/team-protocol/src/messages.js';
 
 function makeRoot() {
   const root = join(tmpdir(), `nova-team-test-${process.pid}-${Math.random().toString(36).slice(2)}`);
@@ -89,6 +90,44 @@ describe('team-protocol', () => {
     const inbox = await team.inbox('worker-a');
     assert.equal(inbox.length, 1);
     assert.equal(inbox[0].body, 'Hello');
+  });
+
+  test('groupThreads nests replies under one root, newest activity first', () => {
+    const threads = groupThreads([
+      { id: 'm-1', createdAt: '2026-10-01T09:00:00Z' },
+      { id: 'm-3', createdAt: '2026-10-01T09:20:00Z', replyTo: 'm-2' },
+      { id: 'm-2', createdAt: '2026-10-01T09:10:00Z', replyTo: 'm-1' },
+      { id: 'm-lonely', createdAt: '2026-10-01T10:00:00Z', replyTo: 'm-gone' },
+    ]);
+    assert.equal(threads.length, 2);
+    // Threads order by recency of activity; the chained reply joins its root.
+    assert.equal(threads[0].root.id, 'm-lonely');
+    assert.deepEqual(threads[1].members.map((m) => m.id), ['m-1', 'm-2', 'm-3']);
+  });
+
+  test('inbox pulls in each reply\'s root for thread context', async () => {
+    await team.init('demo');
+    // The root is addressed to worker-b; worker-a only gets the reply.
+    const rootMsg = await team.sendMessage({ to: 'worker-b', body: 'root question', type: 'question' });
+    const reply = await team.sendMessage({ to: 'worker-a', body: 'here is my answer', replyTo: rootMsg.id });
+    assert.equal(reply.replyTo, rootMsg.id);
+
+    const inboxA = await team.inbox('worker-a');
+    assert.deepEqual(inboxA.map((m) => m.id).sort(), [rootMsg.id, reply.id].sort());
+
+    // worker-b keeps a plain inbox: the reply was never addressed to them.
+    const inboxB = await team.inbox('worker-b');
+    assert.deepEqual(inboxB.map((m) => m.id), [rootMsg.id]);
+    // Replying marked the root read, exactly like the desktop composer.
+    assert.equal(inboxB[0].status, 'read');
+  });
+
+  test('sendMessage rejects an unknown reply target', async () => {
+    await team.init('demo');
+    await assert.rejects(
+      () => team.sendMessage({ to: 'worker-a', body: 'orphan', replyTo: 'msg_fffffff0' }),
+      /Reply target not found/,
+    );
   });
 
   test('publishContract and listContracts', async () => {

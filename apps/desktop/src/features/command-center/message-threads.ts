@@ -88,3 +88,41 @@ export function flattenThreads<T extends ThreadableMessage>(
   return threads.flatMap((thread) => thread.members);
 }
 
+/** Rows a long thread shows while collapsed: its newest two. */
+export const COLLAPSED_THREAD_ROWS = 2;
+
+/**
+ * How many older members a "show N earlier" toggle would reveal.
+ * 0 means the thread is short enough to render in full.
+ */
+export function hiddenMemberCount<T extends ThreadableMessage>(
+  thread: MessageThread<T>,
+): number {
+  return Math.max(0, thread.members.length - COLLAPSED_THREAD_ROWS);
+}
+
+/**
+ * The members a thread actually renders: the newest two while collapsed,
+ * every member once its root id is in `expanded` (or the thread is short).
+ */
+export function visibleThreadMembers<T extends ThreadableMessage>(
+  thread: MessageThread<T>,
+  expanded: ReadonlySet<string>,
+): T[] {
+  if (hiddenMemberCount(thread) === 0 || expanded.has(thread.root.id)) {
+    return thread.members;
+  }
+  return thread.members.slice(-COLLAPSED_THREAD_ROWS);
+}
+
+/**
+ * Flatten only the visible rows, in exact render order — the sequence the
+ * j/k keyboard walk and scroll-into-view must follow so a hidden message
+ * can never be selected.
+ */
+export function flattenVisibleThreads<T extends ThreadableMessage>(
+  threads: MessageThread<T>[],
+  expanded: ReadonlySet<string>,
+): T[] {
+  return threads.flatMap((thread) => visibleThreadMembers(thread, expanded));
+}
