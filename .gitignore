@@ -1,0 +1,7 @@
+node_modules/
+.nova/
+coverage/
+*.log
+dist/
+target/
+*.tsbuildinfo

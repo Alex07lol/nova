@@ -1,0 +1,8 @@
+{
+  "id": "project-explorer",
+  "name": "Project Explorer",
+  "version": "0.1.0",
+  "description": "Build a concise understanding of a project before changes are proposed.",
+  "permissions": ["filesystem.read"],
+  "tools": ["filesystem"]
+}

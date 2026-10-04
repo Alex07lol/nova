@@ -1,0 +1,8 @@
+{
+  "id": "filesystem",
+  "name": "Filesystem",
+  "version": "0.1.0",
+  "description": "Inspect files inside the active workspace.",
+  "permissions": ["filesystem.read"],
+  "tools": ["filesystem"]
+}

@@ -1,0 +1,7 @@
+{
+  "name": "nova-team-protocol",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared .ai-team protocol: tasks, messages, contracts, decisions, events. Used by the team CLI and the desktop orchestrator."
+}

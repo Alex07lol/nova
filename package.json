@@ -1,0 +1,29 @@
+{
+  "name": "nova-agent",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "nova": "apps/cli/src/main.js",
+    "team": "apps/cli/src/team-cli.js"
+  },
+  "files": [
+    "apps",
+    "packages",
+    "skills",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "progress.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "type": "module",
+  "description": "NOVA: an open-source multi-model coding agent.",
+  "scripts": {
+    "start": "node apps/cli/src/main.js",
+    "test": "node --test",
+    "release:check": "node scripts/check-release.mjs",
+    "pack:check": "npm pack --dry-run --ignore-scripts"
+  }
+}
